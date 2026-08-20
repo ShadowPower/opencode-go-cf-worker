@@ -33,9 +33,10 @@ https://opencode-go-worker.<你的子域>.workers.dev/zen/go/v1/chat/completions
 - 丢弃没有 choice、也没有 usage 的空帧
 - 未知模型没有可靠完成证据时，不把意外断流伪装为成功
 - 兼容 Muse Spark 1.2 对标准 OpenAI 图片请求格式的错误拒绝
+- 让 Responses 客户端在上游响应 ID 失效时自动回退到完整历史重试
 
-符合标准的健康 SSE 流会保持原文。只有 2xx 且 `Content-Type` 为
-`text/event-stream` 的响应会进入修复流，JSON 等其他响应直接透传。
+符合标准的健康 SSE 流会保持原文。只有 Chat Completions 的 2xx SSE
+响应会进入流式修复；Messages、Responses 和无关响应直接透传。
 
 ## 部署
 

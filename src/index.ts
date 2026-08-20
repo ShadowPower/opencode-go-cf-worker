@@ -1,5 +1,6 @@
 import { repairSSE } from "./sse-repair";
 import { repairRequestBody } from "./request-repair";
+import { repairResponsesError } from "./response-repair";
 
 const UPSTREAM_ORIGIN = "https://opencode.ai";
 const API_PATH_PREFIXES = [
@@ -66,10 +67,23 @@ function buildUpstreamRequest(request: Request, incomingURL = new URL(request.ur
   } as RequestInit);
 }
 
-function buildResponse(upstream: Response, requestURL: string): Response {
+function buildResponse(
+  upstream: Response,
+  requestURL: string,
+  pathname = new URL(requestURL).pathname,
+): Response {
   const headers = new Headers(upstream.headers);
   const contentType = headers.get("content-type")?.toLowerCase() ?? "";
-  const isSSE = upstream.ok && contentType.includes("text/event-stream") && upstream.body;
+  const isChatSSE =
+    upstream.ok &&
+    contentType.includes("text/event-stream") &&
+    upstream.body &&
+    (pathname === API_PATH_PREFIXES[0] || pathname.startsWith(`${API_PATH_PREFIXES[0]}/`));
+  const isResponsesStaleError =
+    upstream.status === 400 &&
+    contentType.includes("application/json") &&
+    upstream.body &&
+    pathname === API_PATH_PREFIXES[2];
 
   // Location 指向上游时改回当前 Worker，保证调用方只需替换域名。
   const location = headers.get("location");
@@ -85,7 +99,17 @@ function buildResponse(upstream: Response, requestURL: string): Response {
     }
   }
 
-  if (!isSSE) {
+  if (isResponsesStaleError) {
+    // 正文可能增加兼容标识，不能继续使用上游长度。
+    headers.delete("content-length");
+    return new Response(repairResponsesError(upstream.body), {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers,
+    });
+  }
+
+  if (!isChatSSE) {
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
@@ -109,7 +133,8 @@ export default {
     if (!isAllowedAPIPath(incomingURL.pathname)) return new Response(null, { status: 404 });
 
     const upstream = await fetch(buildUpstreamRequest(request, incomingURL));
-    return buildResponse(upstream, request.url);
+    // incomingURL 已经解析过，直接传入路径可省去成功响应热路径上的重复 URL 解析。
+    return buildResponse(upstream, request.url, incomingURL.pathname);
   },
 } satisfies ExportedHandler;
 

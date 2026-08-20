@@ -81,4 +81,116 @@ describe("透明反向代理", () => {
     expect(await response.text()).toBe('{"ok":true}');
     expect(response.headers.get("x-upstream")).toBe("yes");
   });
+
+  it("Responses 成功 SSE 保持原样", async () => {
+    const body =
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"OK"}\n\n' +
+      'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1"}}\n\n';
+    const upstream = new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    const upstreamBody = upstream.body;
+
+    const response = buildResponse(
+      upstream,
+      "https://demo.example.workers.dev/zen/go/v1/responses",
+    );
+    expect(response.body).toBe(upstreamBody);
+    await expect(response.text()).resolves.toBe(body);
+  });
+
+  it("只规范化 Responses 中无法识别的上一响应失效错误", async () => {
+    const body = JSON.stringify({
+      model: "any-model",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "Error from provider (Console Go): Upstream request failed: [invalid_request_error] referenced response not found or expired",
+      },
+    });
+    const upstream = new Response(body, {
+      status: 400,
+      headers: { "content-type": "application/json", "content-length": String(body.length) },
+    });
+
+    const response = buildResponse(
+      upstream,
+      "https://demo.example.workers.dev/zen/go/v1/responses?trace=1",
+    );
+    const output = (await response.json()) as { error: { message: string } };
+
+    expect(output.error.message).toContain(
+      "previous_response_id: referenced response not found or expired",
+    );
+    expect(response.headers.has("content-length")).toBe(false);
+  });
+
+  it("上一响应失效提示跨越网络分块时仍能规范化", async () => {
+    const parts = [
+      '{"error":{"message":"referenced response ',
+      'not found or expired"}}',
+    ];
+    let index = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const part = parts[index++];
+        if (part === undefined) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new TextEncoder().encode(part));
+      },
+    });
+    const upstream = new Response(body, {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = buildResponse(
+      upstream,
+      "https://demo.example.workers.dev/zen/go/v1/responses",
+    );
+    await expect(response.text()).resolves.toContain(
+      "previous_response_id: referenced response not found or expired",
+    );
+  });
+
+  it("Responses 的其他 400 错误正文保持原样", async () => {
+    const body = '{ "error": { "message": "invalid image_url" } }';
+    const upstream = new Response(body, {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = buildResponse(
+      upstream,
+      "https://demo.example.workers.dev/zen/go/v1/responses",
+    );
+    await expect(response.text()).resolves.toBe(body);
+  });
+
+  it("Responses 图片请求体字节级透传", async () => {
+    const body = JSON.stringify({
+      model: "muse-spark-1.2-contributor",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: "描述图片" },
+            { type: "input_image", image_url: "data:image/jpeg;base64,AA==" },
+          ],
+        },
+      ],
+      stream: true,
+    });
+    const incoming = new Request("https://demo.example.workers.dev/zen/go/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+
+    const upstream = buildUpstreamRequest(incoming);
+    await expect(upstream.text()).resolves.toBe(body);
+  });
 });
