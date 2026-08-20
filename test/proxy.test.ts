@@ -1,7 +1,32 @@
-import { describe, expect, it } from "vitest";
-import { buildResponse, buildUpstreamRequest } from "../src/index";
+import { describe, expect, it, vi } from "vitest";
+import worker, { buildResponse, buildUpstreamRequest, isAllowedAPIPath } from "../src/index";
 
 describe("透明反向代理", () => {
+  it("只接受三个 OpenCode Go API 路径前缀", () => {
+    expect(isAllowedAPIPath("/zen/go/v1/chat/completions")).toBe(true);
+    expect(isAllowedAPIPath("/zen/go/v1/messages")).toBe(true);
+    expect(isAllowedAPIPath("/zen/go/v1/responses")).toBe(true);
+    expect(isAllowedAPIPath("/zen/go/v1/responses/stream")).toBe(true);
+
+    expect(isAllowedAPIPath("/")).toBe(false);
+    expect(isAllowedAPIPath("/favicon.ico")).toBe(false);
+    expect(isAllowedAPIPath("/zen/go/v1/models")).toBe(false);
+    expect(isAllowedAPIPath("/zen/go/v1/chat/completions-unknown")).toBe(false);
+  });
+
+  it("无关路径直接返回 404，不访问上游", async () => {
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal("fetch", upstreamFetch);
+    try {
+      const response = await worker.fetch(new Request("https://demo.example.workers.dev/"));
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("");
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("只替换域名并保留路径和查询参数", () => {
     const incoming = new Request("https://demo.example.workers.dev/zen/go/v1/chat/completions?trace=1", {
       headers: {

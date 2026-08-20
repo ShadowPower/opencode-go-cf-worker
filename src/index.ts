@@ -2,6 +2,11 @@ import { repairSSE } from "./sse-repair";
 import { repairRequestBody } from "./request-repair";
 
 const UPSTREAM_ORIGIN = "https://opencode.ai";
+const API_PATH_PREFIXES = [
+  "/zen/go/v1/chat/completions",
+  "/zen/go/v1/messages",
+  "/zen/go/v1/responses",
+] as const;
 
 const PRIVATE_HEADERS = [
   "cf-connecting-ip",
@@ -31,8 +36,14 @@ const PROXY_HEADERS = [
   "upgrade",
 ];
 
-function buildUpstreamRequest(request: Request): Request {
-  const incomingURL = new URL(request.url);
+function isAllowedAPIPath(pathname: string): boolean {
+  for (const prefix of API_PATH_PREFIXES) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return true;
+  }
+  return false;
+}
+
+function buildUpstreamRequest(request: Request, incomingURL = new URL(request.url)): Request {
   const upstreamURL = new URL(incomingURL.pathname + incomingURL.search, UPSTREAM_ORIGIN);
   const headers = new Headers(request.headers);
 
@@ -93,9 +104,13 @@ function buildResponse(upstream: Response, requestURL: string): Response {
 
 export default {
   async fetch(request: Request): Promise<Response> {
-    const upstream = await fetch(buildUpstreamRequest(request));
+    const incomingURL = new URL(request.url);
+    // 在访问上游前拒绝官网和无关路径，根路径不会再代理出 OpenCode 页面。
+    if (!isAllowedAPIPath(incomingURL.pathname)) return new Response(null, { status: 404 });
+
+    const upstream = await fetch(buildUpstreamRequest(request, incomingURL));
     return buildResponse(upstream, request.url);
   },
 } satisfies ExportedHandler;
 
-export { buildResponse, buildUpstreamRequest };
+export { buildResponse, buildUpstreamRequest, isAllowedAPIPath };
