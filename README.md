@@ -22,8 +22,7 @@ https://opencode-go-worker.<你的子域>.workers.dev/zen/go/v1/chat/completions
 
 ## 修复的上游流式问题
 
-实现参考 `opencode-go-vps`，处理 OpenCode issue #40420、#42918、#43379 涉及的
-异常 SSE：
+处理 OpenCode issue #40420、#42918、#43379 涉及的异常 SSE：
 
 - 补全缺失的 `finish_reason` 和 `data: [DONE]`
 - 根据内容选择 `stop`、`tool_calls` 或 `function_call`
