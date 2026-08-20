@@ -1,0 +1,8 @@
+name = "opencode-go-worker"
+main = "src/worker.ts"
+compatibility_date = "2026-08-20"
+workers_dev = true
+
+[limits]
+# 免费版 Workers 的请求 CPU 预算；网络等待和流式传输等待不计入此时间。
+cpu_ms = 10
