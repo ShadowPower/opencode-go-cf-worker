@@ -19,6 +19,25 @@ describe("透明反向代理", () => {
     expect(upstream.headers.get("origin")).toBe("https://opencode.ai");
   });
 
+  it("不透传会破坏流式请求体的代理头", () => {
+    const incoming = new Request("https://demo.example.workers.dev/zen/go/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({
+        messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA==" } }] }],
+      }),
+      headers: {
+        "content-length": "999999",
+        "content-type": "application/json",
+        "transfer-encoding": "chunked",
+      },
+    });
+    const upstream = buildUpstreamRequest(incoming);
+
+    expect(upstream.headers.get("content-type")).toBe("application/json");
+    expect(upstream.headers.has("content-length")).toBe(false);
+    expect(upstream.headers.has("transfer-encoding")).toBe(false);
+  });
+
   it("改写上游重定向域名", async () => {
     const upstream = new Response(null, {
       status: 302,
