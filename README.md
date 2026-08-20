@@ -18,7 +18,6 @@ https://opencode-go-worker.<你的子域>.workers.dev/zen/go/v1/chat/completions
 - 显式限制为 10 ms CPU，适用于 Cloudflare Workers 免费版
 - 删除传给上游的 Cloudflare 客户端 IP 等隐私头
 - 上游重定向会自动改写成当前 Worker 域名
-- 关键实现包含适量中文注释
 
 ## 修复的上游流式问题
 
