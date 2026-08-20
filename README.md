@@ -33,6 +33,7 @@ https://opencode-go-worker.<你的子域>.workers.dev/zen/go/v1/chat/completions
 - 确保终止 choice 在 usage 之前输出
 - 丢弃没有 choice、也没有 usage 的空帧
 - 未知模型没有可靠完成证据时，不把意外断流伪装为成功
+- 兼容 Muse Spark 1.2 对标准 OpenAI 图片请求格式的错误拒绝
 
 符合标准的健康 SSE 流会保持原文。只有 2xx 且 `Content-Type` 为
 `text/event-stream` 的响应会进入修复流，JSON 等其他响应直接透传。
