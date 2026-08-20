@@ -1,4 +1,5 @@
 import { repairSSE } from "./sse-repair";
+import { repairRequestBody } from "./request-repair";
 
 const UPSTREAM_ORIGIN = "https://opencode.ai";
 
@@ -47,7 +48,7 @@ function buildUpstreamRequest(request: Request): Request {
   return new Request(upstreamURL, {
     method: request.method,
     headers,
-    body: request.body,
+    body: repairRequestBody(request),
     // 透传 ReadableStream body 时使用半双工请求，避免大请求体在标准 Fetch 实现中失败。
     duplex: "half",
     redirect: "manual",
