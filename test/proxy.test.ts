@@ -2,26 +2,97 @@ import { describe, expect, it, vi } from "vitest";
 import worker, { buildResponse, buildUpstreamRequest, isAllowedAPIPath } from "../src/index";
 
 describe("透明反向代理", () => {
-  it("只接受三个 OpenCode Go API 路径前缀", () => {
+  it("放行 /zen/go/v1 下所有子路径", () => {
+    expect(isAllowedAPIPath("/zen/go/v1")).toBe(true);
+    expect(isAllowedAPIPath("/zen/go/v1/")).toBe(true);
     expect(isAllowedAPIPath("/zen/go/v1/chat/completions")).toBe(true);
     expect(isAllowedAPIPath("/zen/go/v1/messages")).toBe(true);
     expect(isAllowedAPIPath("/zen/go/v1/responses")).toBe(true);
     expect(isAllowedAPIPath("/zen/go/v1/responses/stream")).toBe(true);
+    // 上游 GET /zen/go/v1/models 返回 200，客户端启动时需要拉取模型列表。
+    expect(isAllowedAPIPath("/zen/go/v1/models")).toBe(true);
+    // 兼容上游未来新增端点。
+    expect(isAllowedAPIPath("/zen/go/v1/new-endpoint")).toBe(true);
+    expect(isAllowedAPIPath("/zen/go/v1/chat/completions-unknown")).toBe(true);
 
     expect(isAllowedAPIPath("/")).toBe(false);
     expect(isAllowedAPIPath("/favicon.ico")).toBe(false);
-    expect(isAllowedAPIPath("/zen/go/v1/models")).toBe(false);
-    expect(isAllowedAPIPath("/zen/go/v1/chat/completions-unknown")).toBe(false);
+    expect(isAllowedAPIPath("/zen/go/v1models")).toBe(false);
+    expect(isAllowedAPIPath("/zen/go")).toBe(false);
   });
 
-  it("无关路径直接返回 404，不访问上游", async () => {
+  it("无关路径直接返回 404 JSON，不访问上游", async () => {
     const upstreamFetch = vi.fn();
     vi.stubGlobal("fetch", upstreamFetch);
     try {
       const response = await worker.fetch(new Request("https://demo.example.workers.dev/"));
       expect(response.status).toBe(404);
-      expect(await response.text()).toBe("");
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      const body = (await response.json()) as { error: { type: string } };
+      expect(body.error.type).toBe("not_found");
       expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("OPTIONS 预检直接返回 204，不转发上游", async () => {
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal("fetch", upstreamFetch);
+    try {
+      const response = await worker.fetch(
+        new Request("https://demo.example.workers.dev/zen/go/v1/chat/completions", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://example.com",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "authorization, content-type",
+          },
+        }),
+      );
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      expect(response.headers.get("access-control-allow-headers")).toContain("authorization");
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("无关路径的 OPTIONS 同样返回带 CORS 的 404", async () => {
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal("fetch", upstreamFetch);
+    try {
+      const response = await worker.fetch(
+        new Request("https://demo.example.workers.dev/", { method: "OPTIONS" }),
+      );
+      expect(response.status).toBe(404);
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("透传响应补齐 CORS 头", async () => {
+    const upstreamFetch = vi.fn(async () =>
+      new Response('{"object":"list","data":[]}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", upstreamFetch);
+    try {
+      const response = await worker.fetch(
+        new Request("https://demo.example.workers.dev/zen/go/v1/models"),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      expect(await response.text()).toBe('{"object":"list","data":[]}');
+      expect(upstreamFetch).toHaveBeenCalledOnce();
+      const calls = upstreamFetch.mock.calls as unknown[][];
+      const forwarded = calls[0]?.[0] as unknown as Request;
+      expect(new URL(forwarded.url).pathname).toBe("/zen/go/v1/models");
     } finally {
       vi.unstubAllGlobals();
     }

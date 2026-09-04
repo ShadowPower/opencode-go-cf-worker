@@ -3,11 +3,10 @@ import { repairRequestBody } from "./request-repair";
 import { repairResponsesError } from "./response-repair";
 
 const UPSTREAM_ORIGIN = "https://opencode.ai";
-const API_PATH_PREFIXES = [
-  "/zen/go/v1/chat/completions",
-  "/zen/go/v1/messages",
-  "/zen/go/v1/responses",
-] as const;
+const API_BASE_PATH = "/zen/go/v1";
+const CHAT_COMPLETIONS_PATH = "/zen/go/v1/chat/completions";
+const MESSAGES_PATH = "/zen/go/v1/messages";
+const RESPONSES_PATH = "/zen/go/v1/responses";
 
 const PRIVATE_HEADERS = [
   "cf-connecting-ip",
@@ -38,10 +37,51 @@ const PROXY_HEADERS = [
 ];
 
 function isAllowedAPIPath(pathname: string): boolean {
-  for (const prefix of API_PATH_PREFIXES) {
-    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return true;
-  }
-  return false;
+  // 放行 /zen/go/v1 下所有子路径，兼容上游新增端点（如 models、未来新路径）。
+  return pathname === API_BASE_PATH || pathname.startsWith(`${API_BASE_PATH}/`);
+}
+
+function corsHeaders(request?: Request): Headers {
+  const headers = new Headers();
+  // 上游对 OPTIONS 直接返回 404 HTML，且实际响应缺少 ACAO，
+  // 浏览器客户端会被 CORS 拦截。Worker 侧统一补齐，透传逻辑不受影响。
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+  headers.set("access-control-max-age", "86400");
+  const requested =
+    request?.headers.get("access-control-request-headers") ??
+    request?.headers.get("Access-Control-Request-Headers");
+  headers.set(
+    "access-control-allow-headers",
+    requested?.trim()
+      ? requested
+      : "Authorization, Content-Type, x-api-key, anthropic-version, x-opencode-session",
+  );
+  headers.set("vary", "Origin, Access-Control-Request-Headers");
+  return headers;
+}
+
+function withCORS(response: Response, request?: Request): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of corsHeaders(request)) headers.set(name, value);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function workerNotFound(request: Request, incomingURL: URL): Response {
+  // Worker 自身拦截时返回 JSON，便于和上游 HTML 404 区分。
+  const body = JSON.stringify({
+    error: {
+      type: "not_found",
+      message: `Path ${incomingURL.pathname} is not proxied. Use ${API_BASE_PATH}/*`,
+    },
+  });
+  const headers = corsHeaders(request);
+  headers.set("content-type", "application/json");
+  return new Response(body, { status: 404, headers });
 }
 
 function buildUpstreamRequest(request: Request, incomingURL = new URL(request.url)): Request {
@@ -78,12 +118,12 @@ function buildResponse(
     upstream.ok &&
     contentType.includes("text/event-stream") &&
     upstream.body &&
-    (pathname === API_PATH_PREFIXES[0] || pathname.startsWith(`${API_PATH_PREFIXES[0]}/`));
+    (pathname === CHAT_COMPLETIONS_PATH || pathname.startsWith(`${CHAT_COMPLETIONS_PATH}/`));
   const isResponsesStaleError =
     upstream.status === 400 &&
     contentType.includes("application/json") &&
     upstream.body &&
-    pathname === API_PATH_PREFIXES[2];
+    pathname === RESPONSES_PATH;
 
   // Location 指向上游时改回当前 Worker，保证调用方只需替换域名。
   const location = headers.get("location");
@@ -129,12 +169,18 @@ function buildResponse(
 export default {
   async fetch(request: Request): Promise<Response> {
     const incomingURL = new URL(request.url);
+    // 上游对 OPTIONS 返回 404 HTML，这里直接在 Worker 侧回答预检，避免转发 404。
+    if (request.method === "OPTIONS") {
+      if (!isAllowedAPIPath(incomingURL.pathname)) return workerNotFound(request, incomingURL);
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
     // 在访问上游前拒绝官网和无关路径，根路径不会再代理出 OpenCode 页面。
-    if (!isAllowedAPIPath(incomingURL.pathname)) return new Response(null, { status: 404 });
+    if (!isAllowedAPIPath(incomingURL.pathname)) return workerNotFound(request, incomingURL);
 
     const upstream = await fetch(buildUpstreamRequest(request, incomingURL));
     // incomingURL 已经解析过，直接传入路径可省去成功响应热路径上的重复 URL 解析。
-    return buildResponse(upstream, request.url, incomingURL.pathname);
+    // 上游实际响应缺少 CORS 头，统一补齐后浏览器才能读取。
+    return withCORS(buildResponse(upstream, request.url, incomingURL.pathname), request);
   },
 } satisfies ExportedHandler;
 

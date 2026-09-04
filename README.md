@@ -18,7 +18,9 @@ https://opencode-go-worker.<你的子域>.workers.dev/zen/go/v1/chat/completions
 - 显式限制为 10 ms CPU，适用于 Cloudflare Workers 免费版
 - 删除传给上游的 Cloudflare 客户端 IP 等隐私头
 - 上游重定向会自动改写成当前 Worker 域名
-- 只接受 `chat/completions`、`messages` 和 `responses` 三类 API 路径
+- 放行 `/zen/go/v1` 下所有子路径（`chat/completions`、`messages`、`responses`、`models` 及上游未来新增端点），其他路径返回 JSON 404
+- `OPTIONS` 预检在 Worker 侧直接返回 `204`，所有响应补齐 CORS 头（上游对预检返回 404 HTML，且实际响应缺少 `Access-Control-Allow-Origin`）
+- Worker 自身拦截返回 JSON `not_found`，便于和上游 HTML 404 区分
 
 ## 修复的上游流式问题
 
