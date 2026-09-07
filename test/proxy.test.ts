@@ -111,6 +111,8 @@ describe("透明反向代理", () => {
     expect(upstream.url).toBe("https://opencode.ai/zen/go/v1/chat/completions?trace=1");
     expect(upstream.headers.get("authorization")).toBe("Bearer secret");
     expect(upstream.headers.has("cf-connecting-ip")).toBe(false);
+    expect(upstream.headers.has("cf-connecting-ipv6")).toBe(false);
+    expect(upstream.headers.has("cf-pseudo-ipv4")).toBe(false);
     expect(upstream.headers.has("x-forwarded-for")).toBe(false);
     expect(upstream.headers.get("origin")).toBe("https://opencode.ai");
   });

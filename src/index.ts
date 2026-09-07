@@ -10,8 +10,12 @@ const RESPONSES_PATH = "/zen/go/v1/responses";
 
 const PRIVATE_HEADERS = [
   "cf-connecting-ip",
+  "cf-connecting-ipv6",
+  "cf-pseudo-ipv4",
   "cf-ipcountry",
   "cf-ray",
+  "cf-worker",
+  "cf-ew-via",
   "forwarded",
   "true-client-ip",
   "x-forwarded-for",
@@ -88,7 +92,7 @@ function buildUpstreamRequest(request: Request, incomingURL = new URL(request.ur
   const upstreamURL = new URL(incomingURL.pathname + incomingURL.search, UPSTREAM_ORIGIN);
   const headers = new Headers(request.headers);
 
-  // 不向上游泄露 Cloudflare 注入的客户端网络信息。
+  // 不向上游泄露 Cloudflare 注入的客户端网络信息和派生 IP 头。
   for (const name of PRIVATE_HEADERS) headers.delete(name);
   // 请求体由 Workers 运行时重新发送，长度和逐跳头不能从客户端原样透传。
   for (const name of PROXY_HEADERS) headers.delete(name);
